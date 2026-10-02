@@ -43,15 +43,26 @@ const createMutation = useMutation({
 
 const toggleMutation = useMutation({
   mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => toggleRule(id, enabled),
-  onSuccess: refreshRules,
+  onSuccess: async (rule) => {
+    await refreshRules()
+    if (!rule.enabled) {
+      Message.warning('规则已停用，引用该规则的有效基线已失效，相关运行进入待复核队列')
+      await queryClient.invalidateQueries({ queryKey: ['baselines'] })
+      await queryClient.invalidateQueries({ queryKey: ['runs'] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    }
+  },
   onError: (error: Error) => Message.error(error.message),
 })
 
 const deleteMutation = useMutation({
   mutationFn: deleteRule,
   onSuccess: async () => {
-    Message.success('规则已删除')
+    Message.warning('规则已删除，引用该规则的基线已失效，相关运行进入待复核队列')
     await refreshRules()
+    await queryClient.invalidateQueries({ queryKey: ['baselines'] })
+    await queryClient.invalidateQueries({ queryKey: ['runs'] })
+    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
   },
   onError: (error: Error) => Message.error(error.message),
 })
@@ -64,11 +75,26 @@ const submitRule = () => {
   createMutation.mutate({ ...form })
 }
 
+const handleToggle = (rule: IgnoreRule, value: boolean) => {
+  if (!value) {
+    Modal.warning({
+      title: '停用忽略规则',
+      content: `停用“${rule.name}”后，引用该规则快照的有效基线将立即失效，相关已批准运行会回到待复核队列，历史审批依据仍可查看。确认停用？`,
+      hideCancel: false,
+      okText: '停用并触发复核',
+      onOk: () => toggleMutation.mutate({ id: rule.id, enabled: false }),
+    })
+    return
+  }
+  toggleMutation.mutate({ id: rule.id, enabled: true })
+}
+
 const confirmDelete = (rule: IgnoreRule) => {
   Modal.warning({
     title: '删除忽略规则',
-    content: `删除“${rule.name}”后，后续运行将重新标记该区域。`,
+    content: `删除“${rule.name}”后，引用该规则快照的有效基线将立即失效，相关运行回到待复核；历史基线与审批依据仍可查看。`,
     hideCancel: false,
+    okText: '删除并触发复核',
     onOk: () => deleteMutation.mutate(rule.id),
   })
 }
@@ -87,15 +113,15 @@ const projectName = (id: string) =>
   </section>
 
   <a-alert type="info" style="margin-bottom: 16px">
-    规则不会自动批准整张截图；启用后仅在差异报告中折叠匹配区域，高风险区域仍需人工判定。
+    规则不会自动批准整张截图；启用后仅在差异报告中折叠匹配区域。规则停用、修改或删除会使引用其快照的基线立即失效，相关运行重新进入复核，批准时的规则快照永久保留可查。
   </a-alert>
 
   <a-card class="table-panel" :bordered="false">
     <a-table :data="rules" :loading="isLoading" :pagination="false" row-key="id">
       <template #columns>
-        <a-table-column title="规则名称" :width="190">
+        <a-table-column title="规则名称" :width="200">
           <template #cell="{ record }">
-            <div class="primary-cell"><strong>{{ record.name }}</strong><span>{{ record.id }}</span></div>
+            <div class="primary-cell"><strong>{{ record.name }}</strong><span>{{ record.id }} · v{{ record.version }}</span></div>
           </template>
         </a-table-column>
         <a-table-column title="作用范围" :width="160">
@@ -115,7 +141,7 @@ const projectName = (id: string) =>
             <a-switch
               :model-value="record.enabled"
               size="small"
-              @change="(value: string | number | boolean) => toggleMutation.mutate({ id: record.id, enabled: Boolean(value) })"
+              @change="(value: string | number | boolean) => handleToggle(record, Boolean(value))"
             />
           </template>
         </a-table-column>

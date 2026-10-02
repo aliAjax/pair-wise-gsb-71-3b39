@@ -183,6 +183,7 @@ const submitImport = async () => {
       <a-grid-item>
         <a-select v-model="filters.status" allow-clear placeholder="全部状态">
           <a-option value="pending">待审批</a-option>
+          <a-option value="re-review">待复核</a-option>
           <a-option value="approved">已批准</a-option>
           <a-option value="rejected">已驳回</a-option>
           <a-option value="merged">已合并</a-option>

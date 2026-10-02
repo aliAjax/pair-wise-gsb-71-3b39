@@ -58,7 +58,7 @@ const { data: runs } = useQuery({
         <template #title>发布阻断项</template>
         <template #extra><router-link to="/approvals">查看队列</router-link></template>
         <div class="blocker-list">
-          <div v-for="run in runs?.filter((item) => item.status === 'pending').slice(0, 4)" :key="run.id" class="blocker-row">
+          <div v-for="run in runs?.filter((item) => item.status === 'pending' || item.status === 're-review').slice(0, 4)" :key="run.id" class="blocker-row">
             <div class="severity-line" :class="{ high: run.mismatchRate >= 5 }" />
             <div class="blocker-main">
               <strong>{{ run.page }}</strong>

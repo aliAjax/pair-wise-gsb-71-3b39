@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { Message } from '@arco-design/web-vue'
 import { getRuns, mergeRuns } from '@/api/http'
@@ -10,9 +10,17 @@ const queryClient = useQueryClient()
 const selectedKeys = ref<string[]>([])
 
 const { data: runs, isLoading } = useQuery({
-  queryKey: ['runs', { status: 'pending' }],
-  queryFn: () => getRuns({ status: 'pending' }),
+  queryKey: ['runs', 'review-queue'],
+  queryFn: () => getRuns(),
 })
+
+const queueRuns = computed(() =>
+  (runs.value ?? []).filter((run) => run.status === 'pending' || run.status === 're-review'),
+)
+
+const reReviewCount = computed(
+  () => queueRuns.value.filter((run) => run.status === 're-review').length,
+)
 
 const mergeMutation = useMutation({
   mutationFn: mergeRuns,
@@ -32,7 +40,7 @@ const unignoredCount = (run: ScreenshotRun) =>
   <section class="page-intro compact">
     <div>
       <h2>待审批队列</h2>
-      <p>审批人不能直接覆盖基线；批准、驳回和忽略都必须留下可审计原因。</p>
+      <p>审批人不能直接覆盖基线；批准、驳回和忽略都必须留下可审计原因。忽略规则变化引发的复核会优先提示。</p>
     </div>
     <a-space>
       <a-button :disabled="selectedKeys.length < 2" @click="mergeMutation.mutate(selectedKeys)">
@@ -46,38 +54,41 @@ const unignoredCount = (run: ScreenshotRun) =>
 
   <div class="queue-summary">
     <div>
-      <span>当前待审批</span>
-      <strong>{{ runs?.length ?? 0 }}</strong>
+      <span>当前待处理</span>
+      <strong>{{ queueRuns.length }}</strong>
+    </div>
+    <div>
+      <span>其中待复核</span>
+      <strong :class="{ danger: reReviewCount > 0 }">{{ reReviewCount }}</strong>
     </div>
     <div>
       <span>高风险运行</span>
-      <strong class="danger">{{ runs?.filter((run) => run.mismatchRate >= 5).length ?? 0 }}</strong>
+      <strong class="danger">{{ queueRuns.filter((run) => run.mismatchRate >= 5).length }}</strong>
     </div>
     <div>
-      <span>可合并运行</span>
-      <strong>2 组</strong>
-    </div>
-    <div>
-      <span>预计阻塞时间</span>
-      <strong>43 分钟</strong>
+      <span>规则依据失效</span>
+      <strong>{{ reReviewCount }} 条</strong>
     </div>
   </div>
 
   <a-card class="table-panel" :bordered="false">
     <a-table
       v-model:selected-keys="selectedKeys"
-      :data="runs"
+      :data="queueRuns"
       :loading="isLoading"
       :pagination="false"
       row-key="id"
       :row-selection="{ type: 'checkbox', showCheckedAll: true }"
     >
       <template #columns>
-        <a-table-column title="优先队列" :width="260">
+        <a-table-column title="优先队列" :width="300">
           <template #cell="{ record }">
             <div class="primary-cell">
               <router-link :to="`/runs/${record.id}`">{{ record.page }}</router-link>
               <span>{{ record.name }} · {{ record.id }}</span>
+              <a-tag v-if="record.status === 're-review'" color="gold" size="small" style="margin-top: 4px; width: fit-content">
+                规则变化：{{ record.invalidatedBy?.ruleName }}
+              </a-tag>
             </div>
           </template>
         </a-table-column>
@@ -99,7 +110,9 @@ const unignoredCount = (run: ScreenshotRun) =>
           <template #cell="{ record }"><StatusTag :status="record.status" /></template>
         </a-table-column>
         <a-table-column title="操作" :width="100" fixed="right">
-          <template #cell="{ record }"><router-link :to="`/runs/${record.id}`">开始评审</router-link></template>
+          <template #cell="{ record }">
+            <router-link :to="`/runs/${record.id}`">{{ record.status === 're-review' ? '开始复核' : '开始评审' }}</router-link>
+          </template>
         </a-table-column>
       </template>
     </a-table>

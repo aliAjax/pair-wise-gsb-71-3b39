@@ -834,3 +834,105 @@ code {
     height: 590px;
   }
 }
+
+/* 忽略证据、规则快照与失效提示 */
+.evidence-line {
+  color: #722ed1 !important;
+}
+
+.region-item:disabled {
+  cursor: not-allowed;
+}
+
+.region-item:disabled:hover {
+  background: #fff;
+}
+
+.review-evidence {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+
+.review-evidence strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #4e5969;
+}
+
+.review-evidence ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.review-evidence li {
+  color: #86909c;
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.baseline-detail {
+  padding: 8px 16px 12px;
+  background: #fafbfc;
+}
+
+.baseline-detail h4 {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  color: #1d2129;
+}
+
+.invalid-box {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #ffece8;
+  color: #cb272d;
+  font-size: 12px;
+}
+
+.snapshot-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.snapshot-list li {
+  padding: 10px 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.snapshot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.snapshot-list code {
+  display: block;
+  margin-bottom: 4px;
+  color: #165dff;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.snapshot-list small {
+  color: #86909c;
+  font-size: 11px;
+}
+
+.status-ok {
+  color: #00b42a;
+}
+
+.danger-text {
+  display: block;
+  color: #cb272d !important;
+}
