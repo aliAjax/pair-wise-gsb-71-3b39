@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { Message } from '@arco-design/web-vue'
 import DiffCanvas from '@/components/DiffCanvas.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { getRun, reviewRun } from '@/api/http'
+import { getRun, reviewRun, updateRunRegion } from '@/api/http'
 import { useReviewStore } from '@/stores/review'
 import type { DifferenceRegion, ReviewCategory } from '@/types'
 
@@ -22,6 +22,7 @@ const queryClient = useQueryClient()
 const reviewStore = useReviewStore()
 const runId = computed(() => String(route.params.id))
 const localRegions = ref<DifferenceRegion[]>([])
+const baseRevision = ref(0)
 
 const form = reactive<ReviewForm>({
   category: 'design-change',
@@ -38,9 +39,17 @@ const { data: run, isLoading } = useQuery({
 watch(
   run,
   (value) => {
-    if (value) localRegions.value = value.regions.map((region) => ({ ...region }))
-    reviewStore.setDifferenceFilter('all')
+    if (value) {
+      localRegions.value = value.regions.map((region) => ({ ...region }))
+      baseRevision.value = value.revision
+    }
   },
+  { immediate: true },
+)
+
+watch(
+  runId,
+  () => reviewStore.setDifferenceFilter('all'),
   { immediate: true },
 )
 
@@ -58,7 +67,8 @@ const suspiciousPixels = computed(() =>
 )
 
 const reviewMutation = useMutation({
-  mutationFn: (payload: ReviewForm) => reviewRun(runId.value, payload),
+  mutationFn: (payload: ReviewForm) =>
+    reviewRun(runId.value, { ...payload, baseRevision: baseRevision.value }),
   onSuccess: async (updated) => {
     Message.success(updated.review?.decision === 'approved' ? '审批通过，新基线已留痕' : '已驳回归并保留原基线')
     await queryClient.invalidateQueries({ queryKey: ['run', runId.value] })
@@ -67,12 +77,30 @@ const reviewMutation = useMutation({
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     await router.push('/approvals')
   },
-  onError: (error: Error) => Message.error(error.message),
+  onError: async (error: Error) => {
+    Message.error(error.message)
+    await queryClient.invalidateQueries({ queryKey: ['run', runId.value] })
+    await queryClient.invalidateQueries({ queryKey: ['runs'] })
+  },
+})
+
+const regionMutation = useMutation({
+  mutationFn: ({ regionId, ignored }: { regionId: string; ignored: boolean }) =>
+    updateRunRegion(runId.value, regionId, ignored),
+  onSuccess: async (updated) => {
+    queryClient.setQueryData(['run', runId.value], updated)
+    Message.success('区域忽略状态已保存')
+    await queryClient.invalidateQueries({ queryKey: ['runs'] })
+  },
+  onError: async (error: Error) => {
+    Message.error(error.message)
+    await queryClient.invalidateQueries({ queryKey: ['run', runId.value] })
+  },
 })
 
 const toggleIgnored = (target: DifferenceRegion) => {
-  const region = localRegions.value.find((item) => item.id === target.id)
-  if (region) region.ignored = !region.ignored
+  if (regionMutation.isPending.value) return
+  regionMutation.mutate({ regionId: target.id, ignored: !target.ignored })
 }
 
 const handleDifferenceFilter = (value: string | number | boolean) => {
@@ -113,9 +141,14 @@ const submitReview = () => {
       <div class="run-facts">
         <div><span>差异率</span><strong :class="{ danger: run.mismatchRate >= 5 }">{{ run.mismatchRate.toFixed(2) }}%</strong></div>
         <div><span>待判定像素</span><strong>{{ suspiciousPixels.toLocaleString() }}</strong></div>
+        <div><span>数据版本</span><strong>v{{ run.revision }}</strong></div>
         <div><span>运行标识</span><strong>{{ run.id }}</strong></div>
         <div><span>构建链路</span><strong>{{ run.baselineVersion }} → {{ run.currentVersion }}</strong></div>
       </div>
+
+      <a-alert type="info" style="margin-bottom: 16px">
+        审批基于数据版本 v{{ baseRevision }} 提交；若该运行已被其他会话处理，本次提交会被拒绝并保留当前状态。
+      </a-alert>
 
       <div class="review-workspace">
         <div class="comparison-area">
@@ -163,6 +196,7 @@ const submitReview = () => {
               :key="region.id"
               class="region-item"
               :class="{ ignored: region.ignored }"
+              :disabled="regionMutation.isPending.value"
               @click="toggleIgnored(region)"
             >
               <span class="region-severity" :class="region.severity">{{ region.severity.toUpperCase() }}</span>

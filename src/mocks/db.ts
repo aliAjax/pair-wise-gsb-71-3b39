@@ -1,13 +1,49 @@
-import type { Baseline, DifferenceRegion, IgnoreRule, Project, ScreenshotRun } from '@/types'
+import type {
+  Baseline,
+  BaselineStatus,
+  DifferenceRegion,
+  IgnoreRule,
+  IgnoreRuleSnapshot,
+  Project,
+  ScreenshotRun,
+} from '@/types'
 
 const STORAGE_KEY = 'visual-regression-platform-v1'
+export const SCHEMA_VERSION = 2
 
-interface Database {
+export interface Database {
+  schemaVersion: number
   projects: Project[]
   runs: ScreenshotRun[]
   baselines: Baseline[]
   rules: IgnoreRule[]
 }
+
+/** 生效基线的唯一键：同一项目下同一页面、设备和主题只允许一条生效基线 */
+export const baselineKey = (target: {
+  projectId: string
+  page: string
+  device: string
+  theme: string
+}): string => [target.projectId, target.page, target.device, target.theme].join('::')
+
+/** 采集某个项目当前生效的忽略规则快照，用于基线审批留痕 */
+export const snapshotIgnoreRules = (
+  rules: IgnoreRule[],
+  projectId: string,
+): IgnoreRuleSnapshot[] =>
+  rules
+    .filter((rule) => rule.enabled && (rule.projectId === 'all' || rule.projectId === projectId))
+    .map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      selector: rule.selector,
+      pagePattern: rule.pagePattern,
+      devicePattern: rule.devicePattern,
+      maxDelta: rule.maxDelta,
+      enabled: rule.enabled,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id))
 
 const projects: Project[] = [
   { id: 'p-commerce', name: '零售交易工作台', code: 'RETAIL', owner: '沈宁', pageCount: 42 },
@@ -66,6 +102,7 @@ const runs: ScreenshotRun[] = [
     capturedAt: '2026-09-29T08:42:00+08:00',
     baselineVersion: 'v6.17.4-baseline',
     currentVersion: 'v6.18.0-rc2',
+    revision: 1,
     regions: makeRegions('1048', 1),
   },
   {
@@ -81,6 +118,7 @@ const runs: ScreenshotRun[] = [
     capturedAt: '2026-09-29T08:36:00+08:00',
     baselineVersion: 'v6.17.4-baseline',
     currentVersion: 'v6.18.0-rc2',
+    revision: 1,
     regions: makeRegions('1047', 0.7),
   },
   {
@@ -96,6 +134,7 @@ const runs: ScreenshotRun[] = [
     capturedAt: '2026-09-28T17:20:00+08:00',
     baselineVersion: 'v5.9.1-baseline',
     currentVersion: 'billing-v3.7',
+    revision: 2,
     regions: makeRegions('1046', 1.4),
     review: {
       category: 'design-change',
@@ -118,6 +157,7 @@ const runs: ScreenshotRun[] = [
     capturedAt: '2026-09-28T15:11:00+08:00',
     baselineVersion: 'v2.4.0-baseline',
     currentVersion: 'campaign-v2',
+    revision: 2,
     regions: makeRegions('1045', 2.2),
     review: {
       category: 'render-error',
@@ -140,6 +180,7 @@ const runs: ScreenshotRun[] = [
     capturedAt: '2026-09-28T13:30:00+08:00',
     baselineVersion: 'v5.9.1-baseline',
     currentVersion: 'v5.10.0-rc1',
+    revision: 1,
     regions: makeRegions('1044', 0.9),
   },
   {
@@ -155,62 +196,8 @@ const runs: ScreenshotRun[] = [
     capturedAt: '2026-09-27T19:15:00+08:00',
     baselineVersion: 'v2.5.3-baseline',
     currentVersion: 'v2.6.0-rc3',
+    revision: 1,
     regions: makeRegions('1043', 0.5),
-  },
-]
-
-const baselines: Baseline[] = [
-  {
-    id: 'base-commerce-checkout',
-    projectId: 'p-commerce',
-    page: '订单结算页',
-    device: 'Desktop 1440',
-    theme: 'light',
-    version: 'v6.17.4-baseline',
-    approvedBy: '林默',
-    reason: '合入优惠券区域改版，设计稿版本 DS-318。',
-    approvedAt: '2026-09-19T11:30:00+08:00',
-    runId: 'run-998',
-    active: true,
-  },
-  {
-    id: 'base-console-billing',
-    projectId: 'p-console',
-    page: '账单明细',
-    device: 'Desktop 1920',
-    theme: 'dark',
-    version: 'v5.9.1-baseline',
-    approvedBy: '周航',
-    reason: '升级账单表格主题变量，无业务布局变化。',
-    approvedAt: '2026-09-12T14:05:00+08:00',
-    runId: 'run-961',
-    active: true,
-  },
-  {
-    id: 'base-growth-campaign',
-    projectId: 'p-growth',
-    page: '活动配置',
-    device: 'Android Pixel 8',
-    theme: 'light',
-    version: 'v2.4.0-baseline',
-    approvedBy: '许薇',
-    reason: '第一版移动端活动配置工作台基线。',
-    approvedAt: '2026-08-28T10:10:00+08:00',
-    runId: 'run-902',
-    active: false,
-  },
-  {
-    id: 'base-commerce-list',
-    projectId: 'p-commerce',
-    page: '商品列表页',
-    device: 'iPhone 15',
-    theme: 'light',
-    version: 'v6.17.4-baseline',
-    approvedBy: '沈宁',
-    reason: '商品卡信息密度调整完成，已通过交互验收。',
-    approvedAt: '2026-09-20T16:40:00+08:00',
-    runId: 'run-1002',
-    active: true,
   },
 ]
 
@@ -261,20 +248,133 @@ const rules: IgnoreRule[] = [
   },
 ]
 
-const seed = (): Database => ({ projects, runs, baselines, rules })
+const baselines: Baseline[] = [
+  {
+    id: 'base-commerce-checkout',
+    projectId: 'p-commerce',
+    page: '订单结算页',
+    device: 'Desktop 1440',
+    theme: 'light',
+    version: 'v6.17.4-baseline',
+    approvedBy: '林默',
+    reason: '合入优惠券区域改版，设计稿版本 DS-318。',
+    approvedAt: '2026-09-19T11:30:00+08:00',
+    runId: 'run-998',
+    status: 'active',
+    ruleSnapshot: snapshotIgnoreRules(rules, 'p-commerce'),
+  },
+  {
+    id: 'base-console-billing',
+    projectId: 'p-console',
+    page: '账单明细',
+    device: 'Desktop 1920',
+    theme: 'dark',
+    version: 'v5.9.1-baseline',
+    approvedBy: '周航',
+    reason: '升级账单表格主题变量，无业务布局变化。',
+    approvedAt: '2026-09-12T14:05:00+08:00',
+    runId: 'run-961',
+    status: 'active',
+    ruleSnapshot: snapshotIgnoreRules(rules, 'p-console'),
+  },
+  {
+    id: 'base-growth-campaign',
+    projectId: 'p-growth',
+    page: '活动配置',
+    device: 'Android Pixel 8',
+    theme: 'light',
+    version: 'v2.4.0-baseline',
+    approvedBy: '许薇',
+    reason: '第一版移动端活动配置工作台基线。',
+    approvedAt: '2026-08-28T10:10:00+08:00',
+    runId: 'run-902',
+    status: 'superseded',
+    ruleSnapshot: snapshotIgnoreRules(rules, 'p-growth'),
+  },
+  {
+    id: 'base-commerce-list',
+    projectId: 'p-commerce',
+    page: '商品列表页',
+    device: 'iPhone 15',
+    theme: 'light',
+    version: 'v6.17.4-baseline',
+    approvedBy: '沈宁',
+    reason: '商品卡信息密度调整完成，已通过交互验收。',
+    approvedAt: '2026-09-20T16:40:00+08:00',
+    runId: 'run-1002',
+    status: 'active',
+    ruleSnapshot: snapshotIgnoreRules(rules, 'p-commerce'),
+  },
+]
+
+const seed = (): Database => ({ schemaVersion: SCHEMA_VERSION, projects, runs, baselines, rules })
+
+interface LegacyRun extends Omit<ScreenshotRun, 'revision'> {
+  revision?: number
+}
+
+interface LegacyBaseline extends Omit<Baseline, 'status' | 'ruleSnapshot'> {
+  active?: boolean
+  status?: BaselineStatus
+  ruleSnapshot?: IgnoreRuleSnapshot[]
+}
+
+/** 旧版本地数据升级：补齐运行版本号、基线状态与规则快照，并清理重复的生效基线 */
+const migrate = (raw: Record<string, unknown>): Database => {
+  const legacy = raw as {
+    projects?: Project[]
+    runs?: LegacyRun[]
+    baselines?: LegacyBaseline[]
+    rules?: IgnoreRule[]
+  }
+  const migratedRuns: ScreenshotRun[] = (legacy.runs ?? []).map((run) => ({
+    ...run,
+    revision: typeof run.revision === 'number' ? run.revision : run.review ? 2 : 1,
+  }))
+  const migratedBaselines: Baseline[] = (legacy.baselines ?? []).map((baseline) => {
+    const { active, status, ruleSnapshot, ...rest } = baseline
+    return {
+      ...rest,
+      status: status ?? (active ? 'active' : 'superseded'),
+      ruleSnapshot: Array.isArray(ruleSnapshot) ? ruleSnapshot : [],
+    }
+  })
+  const claimedKeys = new Set<string>()
+  ;[...migratedBaselines]
+    .sort((a, b) => b.approvedAt.localeCompare(a.approvedAt))
+    .forEach((baseline) => {
+      if (baseline.status !== 'active') return
+      const key = baselineKey(baseline)
+      if (claimedKeys.has(key)) baseline.status = 'superseded'
+      else claimedKeys.add(key)
+    })
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    projects: legacy.projects ?? [],
+    runs: migratedRuns,
+    baselines: migratedBaselines,
+    rules: legacy.rules ?? [],
+  }
+}
 
 export const readDb = (): Database => {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) {
     const initial = seed()
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial))
+    writeDb(initial)
     return initial
   }
   try {
-    return JSON.parse(raw) as Database
+    const parsed = JSON.parse(raw) as Partial<Database>
+    if (parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.runs)) {
+      const upgraded = migrate(parsed as Record<string, unknown>)
+      writeDb(upgraded)
+      return upgraded
+    }
+    return parsed as Database
   } catch {
     const initial = seed()
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial))
+    writeDb(initial)
     return initial
   }
 }

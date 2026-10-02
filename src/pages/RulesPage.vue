@@ -20,7 +20,11 @@ const form = reactive({
 const { data: rules, isLoading } = useQuery({ queryKey: ['rules'], queryFn: getRules })
 const { data: projects } = useQuery({ queryKey: ['projects'], queryFn: getProjects })
 
-const refreshRules = async () => queryClient.invalidateQueries({ queryKey: ['rules'] })
+const refreshRules = async () => {
+  await queryClient.invalidateQueries({ queryKey: ['rules'] })
+  await queryClient.invalidateQueries({ queryKey: ['baselines'] })
+  await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+}
 
 const createMutation = useMutation({
   mutationFn: createRule,
@@ -43,7 +47,10 @@ const createMutation = useMutation({
 
 const toggleMutation = useMutation({
   mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => toggleRule(id, enabled),
-  onSuccess: refreshRules,
+  onSuccess: async (rule) => {
+    Message.success(`规则已${rule.enabled ? '启用' : '停用'}，引用旧快照的生效基线已标记待复核`)
+    await refreshRules()
+  },
   onError: (error: Error) => Message.error(error.message),
 })
 
@@ -67,7 +74,7 @@ const submitRule = () => {
 const confirmDelete = (rule: IgnoreRule) => {
   Modal.warning({
     title: '删除忽略规则',
-    content: `删除“${rule.name}”后，后续运行将重新标记该区域。`,
+    content: `删除“${rule.name}”后，后续运行将重新标记该区域，引用旧快照的生效基线会立即失效并等待复核。`,
     hideCancel: false,
     onOk: () => deleteMutation.mutate(rule.id),
   })
@@ -87,7 +94,7 @@ const projectName = (id: string) =>
   </section>
 
   <a-alert type="info" style="margin-bottom: 16px">
-    规则不会自动批准整张截图；启用后仅在差异报告中折叠匹配区域，高风险区域仍需人工判定。
+    规则不会自动批准整张截图；启用后仅在差异报告中折叠匹配区域，高风险区域仍需人工判定。规则的新增、停用或删除会使引用旧快照的生效基线立即失效，并在历史基线中等待复核。
   </a-alert>
 
   <a-card class="table-panel" :bordered="false">

@@ -31,7 +31,7 @@ const { data: runs } = useQuery({
       <MetricPanel label="待审批运行" :value="dashboard?.pendingReview ?? 0" note="其中 2 条影响发布" tone="orange" />
       <MetricPanel label="今日已批准" :value="dashboard?.approvedToday ?? 0" note="均记录批准原因" tone="green" />
       <MetricPanel label="高风险差异" :value="dashboard?.highRisk ?? 0" note="差异率高于 5%" tone="red" />
-      <MetricPanel label="有效基线" :value="dashboard?.activeBaselines ?? 0" note="覆盖 6 个关键页面" tone="blue" />
+      <MetricPanel label="有效基线" :value="dashboard?.activeBaselines ?? 0" :note="dashboard?.recheckBaselines ? `${dashboard.recheckBaselines} 条失效待复核` : '快照与当前规则一致'" tone="blue" />
     </div>
 
     <div class="dashboard-grid">

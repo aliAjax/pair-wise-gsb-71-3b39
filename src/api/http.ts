@@ -1,9 +1,16 @@
 import axios, { type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios'
-import { readDb, writeDb } from '@/mocks/db'
+import {
+  baselineKey,
+  readDb,
+  snapshotIgnoreRules,
+  writeDb,
+  type Database,
+} from '@/mocks/db'
 import type {
   Baseline,
   DashboardData,
   IgnoreRule,
+  IgnoreRuleSnapshot,
   ImportRunPayload,
   Project,
   ReviewPayload,
@@ -30,6 +37,30 @@ const parseBody = <T>(config: InternalAxiosRequestConfig): T => {
   return config.data as T
 }
 
+const snapshotFingerprint = (snapshot: IgnoreRuleSnapshot[]): string =>
+  snapshot
+    .map((rule) =>
+      [rule.id, rule.name, rule.selector, rule.pagePattern, rule.devicePattern, rule.maxDelta].join(
+        '|',
+      ),
+    )
+    .sort()
+    .join('§')
+
+/** 规则发生变化后，快照不再匹配的生效基线立即失效并等待复核 */
+const invalidateBaselines = (db: Database, changeDesc: string): void => {
+  const now = new Date().toISOString()
+  db.baselines.forEach((baseline) => {
+    if (baseline.status !== 'active') return
+    const current = snapshotIgnoreRules(db.rules, baseline.projectId)
+    if (snapshotFingerprint(current) !== snapshotFingerprint(baseline.ruleSnapshot)) {
+      baseline.status = 'recheck'
+      baseline.invalidatedAt = now
+      baseline.invalidatedReason = `${changeDesc}，批准时的规则快照已过期`
+    }
+  })
+}
+
 const mockAdapter: AxiosAdapter = async (config) => {
   await new Promise((resolve) => window.setTimeout(resolve, 180))
   const db = readDb()
@@ -47,7 +78,8 @@ const mockAdapter: AxiosAdapter = async (config) => {
         (run) => run.review?.decision === 'approved' && run.review.reviewedAt.startsWith('2026-09-29'),
       ).length,
       highRisk: db.runs.filter((run) => run.mismatchRate >= 5 && run.status !== 'merged').length,
-      activeBaselines: db.baselines.filter((baseline) => baseline.active).length,
+      activeBaselines: db.baselines.filter((baseline) => baseline.status === 'active').length,
+      recheckBaselines: db.baselines.filter((baseline) => baseline.status === 'recheck').length,
       trend: [
         { date: '09-23', total: 36, failed: 7 },
         { date: '09-24', total: 42, failed: 4 },
@@ -93,21 +125,26 @@ const mockAdapter: AxiosAdapter = async (config) => {
     const payload = parseBody<ReviewPayload>(config)
     const run = db.runs.find((item) => item.id === reviewMatch[1])
     if (!run) throw new Error('运行记录不存在')
+    if (run.revision !== payload.baseRevision) {
+      throw new Error(
+        `该运行已被其他会话更新（当前版本 v${run.revision}），本次提交未生效，请刷新后基于最新版本重新评审`,
+      )
+    }
     run.status = payload.decision
     run.review = {
-      ...payload,
+      category: payload.category,
+      decision: payload.decision,
+      reviewer: payload.reviewer,
+      reason: payload.reason,
       reviewedAt: new Date().toISOString(),
     }
+    run.revision += 1
     if (payload.decision === 'approved') {
-      const baseline = db.baselines.find(
-        (item) =>
-          item.projectId === run.projectId &&
-          item.page === run.page &&
-          item.device === run.device &&
-          item.theme === run.theme &&
-          item.active,
-      )
-      if (baseline) baseline.active = false
+      db.baselines.forEach((item) => {
+        if (item.status !== 'superseded' && baselineKey(item) === baselineKey(run)) {
+          item.status = 'superseded'
+        }
+      })
       db.baselines.unshift({
         id: `base-${Date.now()}`,
         projectId: run.projectId,
@@ -119,9 +156,23 @@ const mockAdapter: AxiosAdapter = async (config) => {
         reason: payload.reason,
         approvedAt: new Date().toISOString(),
         runId: run.id,
-        active: true,
+        status: 'active',
+        ruleSnapshot: snapshotIgnoreRules(db.rules, run.projectId),
       })
     }
+    writeDb(db)
+    return respond(config, run)
+  }
+
+  const regionMatch = path.match(/^\/runs\/([^/]+)\/regions\/([^/]+)$/)
+  if (method === 'patch' && regionMatch) {
+    const payload = parseBody<{ ignored: boolean }>(config)
+    const run = db.runs.find((item) => item.id === regionMatch[1])
+    if (!run) throw new Error('运行记录不存在')
+    const region = run.regions.find((item) => item.id === regionMatch[2])
+    if (!region) throw new Error('差异区域不存在')
+    region.ignored = Boolean(payload.ignored)
+    run.revision += 1
     writeDb(db)
     return respond(config, run)
   }
@@ -136,6 +187,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
     first.mismatchRate =
       selected.reduce((sum, run) => sum + run.mismatchRate, 0) / Math.max(selected.length, 1)
     first.regions = rest.flatMap((run) => run.regions).slice(0, 8)
+    first.revision += 1
     writeDb(db)
     return respond(config, first, 201)
   }
@@ -168,6 +220,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
         capturedAt: new Date().toISOString(),
         baselineVersion: payload.baselineVersion.trim() || '当前有效基线',
         currentVersion: payload.currentVersion.trim() || payload.build.trim(),
+        revision: 1,
         baselineImage: payload.baselineImage,
         currentImage: file.dataUrl,
         regions: [
@@ -210,6 +263,29 @@ const mockAdapter: AxiosAdapter = async (config) => {
     )
   }
 
+  const recheckMatch = path.match(/^\/baselines\/([^/]+)\/recheck$/)
+  if (method === 'post' && recheckMatch) {
+    const payload = parseBody<{ reviewer?: string }>(config)
+    const baseline = db.baselines.find((item) => item.id === recheckMatch[1])
+    if (!baseline) throw new Error('基线不存在')
+    if (baseline.status === 'active') throw new Error('该基线当前有效，无需复核')
+    const conflict = db.baselines.find(
+      (item) =>
+        item.id !== baseline.id &&
+        item.status === 'active' &&
+        baselineKey(item) === baselineKey(baseline),
+    )
+    if (conflict) {
+      throw new Error(`同一页面和设备已存在生效基线 ${conflict.version}，无法恢复该版本`)
+    }
+    baseline.status = 'active'
+    baseline.ruleSnapshot = snapshotIgnoreRules(db.rules, baseline.projectId)
+    baseline.recheckedBy = payload.reviewer?.trim() || '林默'
+    baseline.recheckedAt = new Date().toISOString()
+    writeDb(db)
+    return respond(config, baseline)
+  }
+
   if (method === 'get' && path === '/rules') {
     return respond<IgnoreRule[]>(config, db.rules)
   }
@@ -222,6 +298,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
       createdAt: new Date().toISOString(),
     }
     db.rules.unshift(rule)
+    invalidateBaselines(db, `新增忽略规则「${rule.name}」`)
     writeDb(db)
     return respond(config, rule, 201)
   }
@@ -232,13 +309,19 @@ const mockAdapter: AxiosAdapter = async (config) => {
     const rule = db.rules.find((item) => item.id === ruleMatch[1])
     if (!rule) throw new Error('规则不存在')
     Object.assign(rule, payload)
+    const changeDesc =
+      typeof payload.enabled === 'boolean'
+        ? `忽略规则「${rule.name}」已${payload.enabled ? '启用' : '停用'}`
+        : `忽略规则「${rule.name}」的配置已更新`
+    invalidateBaselines(db, changeDesc)
     writeDb(db)
     return respond(config, rule)
   }
   if (method === 'delete' && ruleMatch) {
     const index = db.rules.findIndex((item) => item.id === ruleMatch[1])
     if (index < 0) throw new Error('规则不存在')
-    db.rules.splice(index, 1)
+    const [removed] = db.rules.splice(index, 1)
+    invalidateBaselines(db, `忽略规则「${removed.name}」已删除`)
     writeDb(db)
     return respond(config, { success: true })
   }
@@ -257,12 +340,20 @@ export const getRun = async (id: string): Promise<ScreenshotRun> =>
   (await api.get<ScreenshotRun>(`/runs/${id}`)).data
 export const reviewRun = async (id: string, payload: ReviewPayload): Promise<ScreenshotRun> =>
   (await api.patch<ScreenshotRun>(`/runs/${id}/review`, payload)).data
+export const updateRunRegion = async (
+  runId: string,
+  regionId: string,
+  ignored: boolean,
+): Promise<ScreenshotRun> =>
+  (await api.patch<ScreenshotRun>(`/runs/${runId}/regions/${regionId}`, { ignored })).data
 export const mergeRuns = async (ids: string[]): Promise<ScreenshotRun> =>
   (await api.post<ScreenshotRun>('/runs/merge', ids)).data
 export const importRuns = async (payload: ImportRunPayload): Promise<ScreenshotRun[]> =>
   (await api.post<ScreenshotRun[]>('/runs/import', payload)).data
 export const getBaselines = async (projectId?: string): Promise<Baseline[]> =>
   (await api.get<Baseline[]>('/baselines', { params: { projectId } })).data
+export const recheckBaseline = async (id: string, reviewer: string): Promise<Baseline> =>
+  (await api.post<Baseline>(`/baselines/${id}/recheck`, { reviewer })).data
 export const getRules = async (): Promise<IgnoreRule[]> =>
   (await api.get<IgnoreRule[]>('/rules')).data
 export const createRule = async (

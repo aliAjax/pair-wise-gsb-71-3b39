@@ -1,6 +1,7 @@
 export type ReviewCategory = 'design-change' | 'render-error' | 'environment-noise'
 export type RunStatus = 'pending' | 'approved' | 'rejected' | 'merged'
 export type Severity = 'high' | 'medium' | 'low'
+export type BaselineStatus = 'active' | 'recheck' | 'superseded'
 
 export interface Project {
   id: string
@@ -44,11 +45,22 @@ export interface ScreenshotRun {
   capturedAt: string
   baselineVersion: string
   currentVersion: string
+  revision: number
   baselineImage?: string
   currentImage?: string
   regions: DifferenceRegion[]
   review?: ReviewRecord
   mergedRunIds?: string[]
+}
+
+export interface IgnoreRuleSnapshot {
+  id: string
+  name: string
+  selector: string
+  pagePattern: string
+  devicePattern: string
+  maxDelta: number
+  enabled: boolean
 }
 
 export interface Baseline {
@@ -62,7 +74,12 @@ export interface Baseline {
   reason: string
   approvedAt: string
   runId: string
-  active: boolean
+  status: BaselineStatus
+  ruleSnapshot: IgnoreRuleSnapshot[]
+  invalidatedAt?: string
+  invalidatedReason?: string
+  recheckedBy?: string
+  recheckedAt?: string
 }
 
 export interface IgnoreRule {
@@ -82,6 +99,7 @@ export interface DashboardData {
   approvedToday: number
   highRisk: number
   activeBaselines: number
+  recheckBaselines: number
   trend: Array<{ date: string; total: number; failed: number }>
 }
 
@@ -100,6 +118,7 @@ export interface ReviewPayload {
   decision: 'approved' | 'rejected'
   reviewer: string
   reason: string
+  baseRevision: number
 }
 
 export interface ImportRunPayload {

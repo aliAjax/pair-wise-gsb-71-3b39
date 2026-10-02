@@ -439,7 +439,7 @@ code {
 
 .run-facts {
   display: grid;
-  grid-template-columns: 0.7fr 0.9fr 1fr 1.6fr;
+  grid-template-columns: 0.7fr 0.9fr 0.7fr 1fr 1.6fr;
   margin-bottom: 16px;
   border: 1px solid #e5e6eb;
   border-radius: 7px;
@@ -761,6 +761,43 @@ code {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 16px;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 10px;
+  max-width: 320px;
+}
+
+.snapshot-item strong,
+.snapshot-item span {
+  display: block;
+}
+
+.snapshot-item strong {
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+
+.snapshot-item span {
+  color: #4e5969;
+  font-size: 11px;
+}
+
+.baseline-status {
+  display: grid;
+  gap: 5px;
+  justify-items: start;
+}
+
+.baseline-status small {
+  color: #86909c;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.recheck-reason {
+  color: #ff7d00 !important;
 }
 
 .history-panel {
